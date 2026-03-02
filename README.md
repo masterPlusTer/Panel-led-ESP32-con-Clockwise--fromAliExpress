@@ -9,8 +9,10 @@ clockwise... pues no es tan facil...
 basicamente esto anda solamente con el firmware ya trae... 
 al reinstalarle cualquier otra cosa desde clockwise lo que pasa es que la mitad del panel deja de funcionar, porque la conexion del panel matricial con el ESP tiene de estandar lo que yo de modelo de calendario asi que me di a la tarea de mapear las conecciones y ya que estamos hacer algo un poco mas interesante que un reloj
 
+LDR - GPIO 34
 
-esta aberracion es la coneccion como viene:
+
+esta aberracion es la coneccion a la matriz como viene:
 
 1=GPIO25
 2=GPIO27
@@ -28,6 +30,8 @@ esta aberracion es la coneccion como viene:
 14=GPIO12
 15=GND
 16=GPIO26
+
+
 
 
 

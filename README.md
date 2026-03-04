@@ -28,7 +28,7 @@ esta aberracion es la coneccion a la matriz como viene:
 10=GPIO04
 11=GPIO17
 12=GPIO19
-13=GPIO32
+13=GPIO32=====(gpio32-PIN E MUY IMPORTANTE)
 14=GPIO12
 15=GND
 16=GPIO26

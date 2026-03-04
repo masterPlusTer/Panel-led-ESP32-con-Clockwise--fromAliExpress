@@ -16,23 +16,20 @@ static const int SPR_W = 16;
 static const int SPR_H = 16;
 
 // Paleta simple (índices 0..7). 0 = transparente
-// Podés cambiar estos colores a gusto.
 uint16_t pal[8];
 
-// Sprite editable: 16x16, cada número es un índice a pal[]
-// 0 = transparente, 1..7 = colores
-// Dibujito ejemplo: “carita”
+// Sprite editable: 16x16
 uint8_t sprite[SPR_H][SPR_W] = {
-  {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+  {5,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
   {0,0,0,0,0,2,2,2,2,2,2,0,0,0,0,0},
   {0,0,0,0,2,2,2,2,2,2,2,2,0,0,0,0},
   {0,0,0,2,2,2,2,2,2,2,2,2,2,0,0,0},
   {0,0,2,2,2,2,2,2,2,2,2,2,2,2,0,0},
   {0,0,2,2,2,0,0,2,2,0,0,2,2,2,0,0},
-  {0,2,2,2,2,0,0,2,2,0,0,2,2,2,2,0},
-  {0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,0},
-  {0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,0},
-  {0,2,2,2,2,0,2,2,2,2,0,2,2,2,2,0},
+  {0,3,2,2,2,0,0,2,2,0,0,2,2,2,3,0},
+  {0,3,2,2,2,2,2,2,2,2,2,2,2,2,3,0},
+  {0,3,2,2,2,2,2,2,2,2,2,2,2,2,3,0},
+  {0,3,2,2,2,0,2,2,2,2,0,2,2,2,3,0},
   {0,0,2,2,2,2,0,0,0,0,2,2,2,2,0,0},
   {0,0,0,2,2,2,2,2,2,2,2,2,2,0,0,0},
   {0,0,0,0,2,2,2,2,2,2,2,2,0,0,0,0},
@@ -47,6 +44,12 @@ struct SpriteObj {
   float vx, vy;
 } obj;
 
+// --- Mapeo de color para TU panel ---
+// Tu panel está con canales rotados: RGB -> GBR (R->G, G->B, B->R)
+static inline uint16_t panel565(uint8_t r, uint8_t g, uint8_t b) {
+  return display->color565(g, b, r);
+}
+
 // Dibuja sprite con transparencia
 void drawSprite(int x0, int y0) {
   for (int y = 0; y < SPR_H; y++) {
@@ -58,7 +61,7 @@ void drawSprite(int x0, int y0) {
       if (xx < 0 || xx >= display->width()) continue;
 
       uint8_t idx = sprite[y][x];
-      if (idx == 0) continue; // transparente
+      if (idx == 0) continue;
 
       display->drawPixel(xx, yy, pal[idx]);
     }
@@ -75,7 +78,7 @@ void setup() {
   mxconfig.driver = HUB75_I2S_CFG::FM6126A;
   mxconfig.clkphase = true;
 
-  // AHORA sí: doble buffer real
+  // doble buffer
   mxconfig.double_buff = true;
 
   display = new MatrixPanel_I2S_DMA(mxconfig);
@@ -88,15 +91,15 @@ void setup() {
   display->setBrightness8(90);
   display->clearScreen();
 
-  // Paleta (0 = transparente, igual le damos un valor)
-  pal[0] = display->color565(0, 0, 0);
-  pal[1] = display->color565(255, 255, 255); // blanco
-  pal[2] = display->color565(255, 210, 0);   // amarillo
-  pal[3] = display->color565(0, 255, 0);     // verde
-  pal[4] = display->color565(0, 0, 255);     // azul
-  pal[5] = display->color565(255, 0, 0);     // rojo
-  pal[6] = display->color565(255, 0, 255);   // magenta
-  pal[7] = display->color565(0, 255, 255);   // cyan
+  // Paleta usando el mapeo corregido
+  pal[0] = panel565(0, 0, 0);
+  pal[1] = panel565(255, 255, 255); // blanco
+  pal[2] = panel565(255, 210, 0);   // amarillo
+  pal[3] = panel565(0, 255, 0);     // verde
+  pal[4] = panel565(0, 0, 255);     // azul
+  pal[5] = panel565(255, 0, 0);     // rojo
+  pal[6] = panel565(255, 0, 255);   // magenta
+  pal[7] = panel565(0, 255, 255);   // cyan
 
   randomSeed(esp_random());
 
@@ -110,16 +113,10 @@ void setup() {
 }
 
 void loop() {
-  // dibujar TODO en backbuffer
   display->clearScreen();
-
-  // sprite
   drawSprite((int)obj.x, (int)obj.y);
-
-  // flip: ahora mostrás el frame completo
   display->flipDMABuffer();
 
-  // física simple + rebote
   obj.x += obj.vx;
   obj.y += obj.vy;
 

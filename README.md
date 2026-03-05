@@ -5,11 +5,8 @@ Hace un tiempo compré en AliExpress este pequeño gadget:
 ![esp32matrix1](https://github.com/user-attachments/assets/9122d3a7-0c69-4042-b326-7ec08ad73e53)\
 ![esp32matrix2](https://github.com/user-attachments/assets/a6f5e992-4ea1-4b2f-8697-119879209f23)
 
-Lamentablemente el producto ya no está disponible, y toda la
-documentación oficial desapareció junto con la página del vendedor.\
-Lo único que queda es esta pequeña imagen guardada en el historial de
-compras.
-
+El producto ya no está disponible y prácticamente **no existe
+documentación oficial**.\
 Este repositorio documenta el **hardware real del dispositivo**, el
 **pinout correcto** y los problemas encontrados al intentar usar
 firmware alternativo.
@@ -53,11 +50,12 @@ Sin embargo, cuando se instala firmware alternativo desde **Clockwise**,
 solo **la mitad del panel funciona**.
 
 La razón es que el panel HUB75 **no está conectado con el pinout
-estándar**.\
-El firmware de Clockwise asume una conexión estándar, pero el fabricante
-decidió usar un mapeo completamente diferente.
+estándar**.
 
-Esto provoca que:
+El firmware asume una conexión estándar pero el fabricante decidió usar
+un mapeo completamente diferente.
+
+Esto provoca:
 
 -   solo se actualicen **16 filas**
 -   el resto del panel quede apagado o muestre artefactos
@@ -92,11 +90,6 @@ El cableado real entre el ESP32 y el panel es:
 Los paneles HUB75 64×64 usan multiplexado **1/32**, por lo que la línea
 **E selecciona las filas adicionales**.
 
-Sin esta línea funcionando correctamente:
-
--   solo se actualizan **16 filas**
--   el resto del panel no responde correctamente
-
 ------------------------------------------------------------------------
 
 # Peripheral Connections
@@ -118,27 +111,84 @@ Puede usarse para ajustar automáticamente el brillo del panel.
 
 ------------------------------------------------------------------------
 
+# LED Matrix Scan Architecture
+
+El panel **no enciende todos los LEDs al mismo tiempo**.
+
+Usa multiplexado de filas:
+
+    1/32 scan
+
+Solo **dos filas se activan simultáneamente**.
+
+Secuencia simplificada:
+
+    Step 1
+    Row 0 + Row 32
+
+    Step 2
+    Row 1 + Row 33
+
+    Step 3
+    Row 2 + Row 34
+
+    ...
+
+    Step 32
+    Row 31 + Row 63
+
+Esto ocurre cientos de veces por segundo.
+
+Debido a este sistema pueden aparecer:
+
+-   ghosting
+-   artefactos
+-   sensibilidad al brillo
+
+------------------------------------------------------------------------
+
+# HUB75 Address Lines
+
+Las filas se seleccionan usando:
+
+    A
+    B
+    C
+    D
+    E
+
+Para un panel 64×64:
+
+    A B C D E = selector de fila
+
+Ejemplo:
+
+    00000 → filas 0 / 32
+    00001 → filas 1 / 33
+    00010 → filas 2 / 34
+    ...
+    11111 → filas 31 / 63
+
+Sin la línea **E** solo se pueden direccionar **16 filas**.
+
+------------------------------------------------------------------------
+
 # RGB Channel Swap
 
 Durante las pruebas se detectó que los colores no coinciden con el orden
 RGB esperado.
 
-Comportamiento observado:
-
-  Color esperado   Color mostrado
-  ---------------- ----------------
+  Color esperado   Color real
+  ---------------- ------------
   Red              Green
   Green            Blue
   Blue             Red
 
-Esto significa que los canales están rotados:
+Esto significa que el panel realmente funciona como:
 
     RGB → GBR
 
-La solución es remapear los canales en software antes de convertir a
-RGB565.
-
-Ejemplo:
+Solución en software:
 
 ``` cpp
 static inline uint16_t panel565(uint8_t r, uint8_t g, uint8_t b) {
@@ -148,106 +198,160 @@ static inline uint16_t panel565(uint8_t r, uint8_t g, uint8_t b) {
 
 ------------------------------------------------------------------------
 
-# Power Stability Issues
+# Display Artifacts
 
-Al mostrar colores muy brillantes (especialmente **blanco o amarillo**)
-pueden aparecer:
+Durante las pruebas se observaron artefactos visuales:
 
--   píxeles aleatorios
--   destellos
--   glitches visuales
+-   reflejos rojos
+-   ghosting
+-   píxeles fantasma cerca de sprites brillantes
 
-Esto ocurre porque los paneles HUB75 generan **picos de corriente muy
-rápidos** debido al multiplexado.
+Esto ocurre principalmente cuando:
 
-La fuente original es:
+-   el sprite está en ciertas posiciones del panel
+-   se usan colores muy brillantes (blanco o amarillo)
 
-    5V 8A switching supply
-
-Aunque es suficiente en teoría, los picos de corriente pueden provocar
-pequeñas caídas de tensión.
-
-## Solución
-
-Agregar capacitancia adicional entre **5V y GND** cerca del panel.
-
-Capacitor recomendado:
-
-    1000µF – 2200µF
-
-Ejemplo:
-
-    5V ----+---- panel
-           |
-           | + 
-         [2200µF]
-           | -
-           |
-    GND ---+---- panel
-
-Esto reduce significativamente los artefactos visuales.
+Esto es típico en paneles HUB75 económicos.
 
 ------------------------------------------------------------------------
 
-# Reverse Engineering Notes
+# Power Stability
 
-El dispositivo parece estar construido a partir de:
+Los paneles HUB75 generan **picos de corriente muy rápidos**.
 
--   4 submódulos LED 32×32
--   drivers tipo **FM6126A**
--   multiplexado 1/32
+Incluso con una fuente:
 
-Esto explica:
+    5V 8A
 
--   la necesidad de la línea **E**
--   la sensibilidad a caídas de tensión
--   algunos artefactos cuando el brillo es alto
+pueden aparecer:
+
+-   píxeles aleatorios
+-   ghosting
+-   glitches
+
+### Solución
+
+Agregar capacitancia adicional.
+
+    1000µF – 2200µF
+
+Conexión:
+
+    5V ----+---- panel
+           |
+         [2200µF]
+           |
+    GND ---+---- panel
+
+Esto reduce significativamente los artefactos.
+
+------------------------------------------------------------------------
+
+# Internal Hardware Layout
+
+Después de desmontar el dispositivo se observa:
+
+    +-------------------------------------+
+    |                                     |
+    |         RGB LED MATRIX              |
+    |                                     |
+    |   [driver IC] [driver IC]           |
+    |   [driver IC] [driver IC]           |
+    |                                     |
+    |        HUB75 DATA CONNECTOR         |
+    |                                     |
+    +-------------------------------------+
+
+               |
+               | ribbon cable
+               |
+
+    +-----------------------------+
+    |         ESP32 BOARD         |
+    |                             |
+    |  WiFi MCU                   |
+    |                             |
+    |  USB Programming Interface  |
+    |                             |
+    +-----------------------------+
+
+------------------------------------------------------------------------
+
+# Identified Components
+
+### ESP32
+
+Controlador principal.
+
+Responsable de:
+
+-   WiFi
+-   sincronización de tiempo
+-   control del panel HUB75
+
+### LED Drivers
+
+El panel parece usar chips similares a:
+
+    FM6126A
+
+Estos manejan:
+
+-   PWM RGB
+-   multiplexado
+-   shift registers
+
+------------------------------------------------------------------------
+
+# Observed Hardware Quirks
+
+  Issue                         Description
+  ----------------------------- ---------------------------------------------
+  Pinout no estándar            GPIOs no coinciden con placas HUB75 típicas
+  RGB rotado                    Orden GBR
+  Ghosting                      Visible con alto brillo
+  Sensibilidad a alimentación   Mejorado con capacitor grande
 
 ------------------------------------------------------------------------
 
 # Current Status
 
-✔ Panel funcionando correctamente\
-✔ Pinout completamente identificado\
-✔ Soporte completo para panel 64×64\
-✔ Corrección de canales RGB\
-✔ Animaciones y sprites personalizados
+✔ Panel funcionando\
+✔ Pinout identificado\
+✔ Soporte completo 64×64\
+✔ Animaciones y sprites funcionando
 
 Pendiente:
 
--   control automático de brillo con LDR
+-   brillo automático con LDR
 -   sincronización NTP
--   animaciones más complejas
 -   editor de sprites
 
 ------------------------------------------------------------------------
 
 # How to Repurpose This Device
 
-Una vez entendido el hardware, este dispositivo puede usarse como:
+Una vez entendido el hardware, este dispositivo puede convertirse en:
 
--   pantalla LED programable
--   reloj NTP conectado a WiFi
+-   reloj WiFi
+-   display programable
 -   panel de animaciones
--   display para sensores IoT
--   pequeño tablero de notificaciones
+-   tablero de sensores
+-   mini display IoT
 
-Básicamente se puede convertir en **una pantalla LED HUB75 completamente
-programable basada en ESP32**.
+Básicamente una **pantalla HUB75 totalmente programable basada en
+ESP32**.
 
 ------------------------------------------------------------------------
 
-# Notes
+# Final Note
 
 Si llegaste aquí porque compraste uno de estos relojes y el firmware
 alternativo no funciona:
 
-no estás loco.
+no es tu culpa.
 
-El problema no es el firmware.
-
-El problema es que el fabricante decidió cablear el panel de una forma
-bastante... creativa.
+El fabricante decidió cablear el panel de una forma bastante creativa.
 
 
 

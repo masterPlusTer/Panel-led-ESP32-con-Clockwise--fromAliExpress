@@ -1,358 +1,331 @@
-# ESP32 64x64 RGB Matrix Clock (AliExpress Reverse Engineering)
+# ESP32 64×64 RGB Matrix Clock (AliExpress Reverse Engineering)
 
-Hace un tiempo compré en AliExpress este pequeño gadget:
+Este repo existe porque (como es tradición) un vendedor de AliExpress vendió un producto “compatible” y después desapareció del mapa con toda la documentación.  
+Resultado: **ingeniería inversa** a la vieja usanza.
 
-![esp32matrix1](https://github.com/user-attachments/assets/9122d3a7-0c69-4042-b326-7ec08ad73e53)\
+## TL;DR
+
+- Dispositivo: **ESP32‑WROOM‑32 + panel HUB75 RGB 64×64 + buzzer + LDR**
+- El firmware original funciona (reloj “Super Mario”).
+- “Clockwise” y otros firmwares genéricos **no** funcionan bien porque el fabricante usó un **pinout no estándar**, especialmente **PIN E**.
+- Además, el panel/driver parece venir con **orden de color distinto (RGB → GBR)**.
+- Hay **ghosting / reflejos** (especialmente abajo) que mejoran con **alimentación decente + capacitor grande + brillo moderado + timing correcto**.
+- Algunas “bandas diagonales” o “franjas” **solo aparecen en fotos** (rolling shutter de la cámara + PWM del panel).
+
+---
+
+# 1) El bicho
+
+Fotos del dispositivo:
+
+![esp32matrix1](https://github.com/user-attachments/assets/9122d3a7-0c69-4042-b326-7ec08ad73e53)  
 ![esp32matrix2](https://github.com/user-attachments/assets/a6f5e992-4ea1-4b2f-8697-119879209f23)
 
-El producto ya no está disponible y prácticamente **no existe
-documentación oficial**.\
-Este repositorio documenta el **hardware real del dispositivo**, el
-**pinout correcto** y los problemas encontrados al intentar usar
-firmware alternativo.
+Lo que era (promesa de marketing):
+- Reloj preinstalado “Mario”
+- “Se le pueden instalar más relojes desde Clockwise”
 
-------------------------------------------------------------------------
+Lo que es (realidad):
+- **Funciona bien solo con el firmware que trae**
+- Si cargás firmware genérico sin configurar el panel, **funciona media pantalla / filas raras / colores cruzados**
 
-# Hardware Architecture
+---
 
-El dispositivo está compuesto por:
+# 2) Hardware Architecture
 
--   **ESP32‑WROOM‑32**
--   **Panel RGB HUB75 64×64**
--   **Buzzer**
--   **Sensor de luz (LDR)**
--   **Fuente de alimentación 5V**
+Componentes identificados:
+
+- **ESP32‑WROOM‑32**
+- **Panel RGB HUB75 64×64** (multiplexado 1/32)
+- **Buzzer**
+- **LDR** (sensor de luz)
+- Entrada **5V** (USB/step-down según versión del dispositivo)
 
 Diagrama simplificado:
 
-               +------------------+
-               |      ESP32       |
-               |                  |
-               | GPIO2  -> Buzzer|
-               | GPIO34 -> LDR   |
-               |                  |
-               | HUB75 Signals    |
-               +--------+---------+
-                        |
-                        |
-                 +------v------+
-                 | 64x64 RGB   |
-                 | HUB75 Panel |
-                 +-------------+
+```
+           +------------------+
+           |      ESP32       |
+           |                  |
+           | GPIO2  -> Buzzer |
+           | GPIO34 -> LDR    |
+           |                  |
+           | HUB75 Signals    |
+           +--------+---------+
+                    |
+                    | ribbon cable
+                    v
+             +--------------+
+             | 64×64 HUB75  |
+             | RGB Matrix   |
+             +--------------+
+```
 
-------------------------------------------------------------------------
+---
 
-# Firmware Compatibility Issue
+# 3) El problema principal: pinout “creativo” (y el PIN E)
 
-El firmware original funciona correctamente.
+El panel es **64×64**, así que normalmente es **1/32 scan** y necesita la línea **E** para direccionar todas las filas.
 
-Sin embargo, cuando se instala firmware alternativo desde **Clockwise**,
-solo **la mitad del panel funciona**.
+Cuando cargábamos firmware alternativo sin E:
+- solo se actualizaban partes del panel (por ejemplo “primera tanda de 16 filas” y otra “tanda”)
+- el resto quedaba apagado o con artefactos
 
-La razón es que el panel HUB75 **no está conectado con el pinout
-estándar**.
+**Solución clave:** configurar **PIN E** en el ESP32.
 
-El firmware asume una conexión estándar pero el fabricante decidió usar
-un mapeo completamente diferente.
+Ejemplo (Arduino + ESP32-HUB75-MatrixPanel-I2S-DMA):
 
-Esto provoca:
+```cpp
+HUB75_I2S_CFG mxconfig(64, 64, 1);
+mxconfig.gpio.e = 32;           // <<<<<< PIN E (CLAVE EN ESTE HARDWARE)
+```
 
--   solo se actualicen **16 filas**
--   el resto del panel quede apagado o muestre artefactos
+---
 
-------------------------------------------------------------------------
+# 4) Pin mapping real (HUB75 → ESP32)
 
-# HUB75 Pin Mapping
+Cableado real entre el ESP32 y el conector HUB75 del panel (como viene en este dispositivo):
 
-El cableado real entre el ESP32 y el panel es:
+| Pin HUB75 | Señal (según panel) | GPIO ESP32 |
+|---:|---|---|
+| 1  | (R1 típico) | GPIO25 |
+| 2  | (G1 típico) | GPIO27 |
+| 3  | (B1 típico) | GPIO14 |
+| 4  | (R2 típico) | GPIO09 |
+| 5  | (G2 típico) | GPIO23 |
+| 6  | (B2 típico) | GPIO05 |
+| 7  | A | GPIO16 |
+| 8  | B | GPIO15 |
+| 9  | GND | GND |
+| 10 | LAT / STB (según placa) | GPIO04 |
+| 11 | D | GPIO17 |
+| 12 | C | GPIO19 |
+| 13 | **E** | **GPIO32** ✅ (MUY IMPORTANTE) |
+| 14 | OE | GPIO12 |
+| 15 | GND | GND |
+| 16 | CLK | GPIO26 |
 
-  Pin HUB75   GPIO ESP32
-  ----------- ---------------------
-  1           GPIO25
-  2           GPIO27
-  3           GPIO14
-  4           GPIO9
-  5           GPIO23
-  6           GPIO5
-  7           GPIO16
-  8           GPIO15
-  9           GND
-  10          GPIO4
-  11          GPIO17
-  12          GPIO19
-  13          **GPIO32 (E line)**
-  14          GPIO12
-  15          GND
-  16          GPIO26
+⚠ Nota: algunos nombres “típicos” (R1/G1/B1, LAT, OE, CLK) pueden variar en serigrafía.  
+Acá lo importante es el **mapeo real a GPIO**, no la etiqueta bonita.
 
-⚠ **La línea E es obligatoria para paneles 64×64.**
+---
 
-Los paneles HUB75 64×64 usan multiplexado **1/32**, por lo que la línea
-**E selecciona las filas adicionales**.
+# 5) Periféricos
 
-------------------------------------------------------------------------
+## 5.1 Buzzer
+- **GPIO2**
+- **Activo-bajo**
+  - GPIO2 = 0 → suena
+  - GPIO2 = 1 → silencio
 
-# Peripheral Connections
+## 5.2 LDR (sensor de luz)
+- **GPIO34 (ADC1)**
+- Útil para brillo automático (pendiente/por implementar).
 
-## Buzzer
+---
 
-    GPIO2
-    Activo bajo
+# 6) Driver IC (panel)
 
-    GPIO2 = 0  -> suena
-    GPIO2 = 1  -> silencio
-
-## Sensor de luz (LDR)
-
-    GPIO34
-    ADC1
-
-Puede usarse para ajustar automáticamente el brillo del panel.
-
-------------------------------------------------------------------------
-
-# LED Matrix Scan Architecture
-
-El panel **no enciende todos los LEDs al mismo tiempo**.
-
-Usa multiplexado de filas:
-
-    1/32 scan
-
-Solo **dos filas se activan simultáneamente**.
-
-Secuencia simplificada:
-
-    Step 1
-    Row 0 + Row 32
-
-    Step 2
-    Row 1 + Row 33
-
-    Step 3
-    Row 2 + Row 34
-
-    ...
-
-    Step 32
-    Row 31 + Row 63
-
-Esto ocurre cientos de veces por segundo.
-
-Debido a este sistema pueden aparecer:
-
--   ghosting
--   artefactos
--   sensibilidad al brillo
-
-------------------------------------------------------------------------
-
-# HUB75 Address Lines
-
-Las filas se seleccionan usando:
-
-    A
-    B
-    C
-    D
-    E
-
-Para un panel 64×64:
-
-    A B C D E = selector de fila
+En fotos del reverso aparece el IC de driver. Por comportamiento y pruebas:
+- funcionan configuraciones tipo **FM6126A** / **FM6124** (depende del panel real)
+- En tu caso, **FM6126A** fue el que “simplemente anduvo”.
 
 Ejemplo:
 
-    00000 → filas 0 / 32
-    00001 → filas 1 / 33
-    00010 → filas 2 / 34
-    ...
-    11111 → filas 31 / 63
+```cpp
+mxconfig.driver = HUB75_I2S_CFG::FM6126A;
+// mxconfig.driver = HUB75_I2S_CFG::FM6124;
+```
 
-Sin la línea **E** solo se pueden direccionar **16 filas**.
+---
 
-------------------------------------------------------------------------
+# 7) Multiplexado / Scan (por qué esto es sensible)
 
-# RGB Channel Swap
+Panel 64×64 típico:
+- **1/32 scan**
+- Selección de filas con: **A, B, C, D, E**
+- Se actualizan filas por “barrido” a alta velocidad.
 
-Durante las pruebas se detectó que los colores no coinciden con el orden
-RGB esperado.
+Simplificado:
 
-  Color esperado   Color real
-  ---------------- ------------
-  Red              Green
-  Green            Blue
-  Blue             Red
+```
+Step 1  : Row 0  + Row 32
+Step 2  : Row 1  + Row 33
+...
+Step 32 : Row 31 + Row 63
+```
 
-Esto significa que el panel realmente funciona como:
+Si **E no está cableado/configurado**, el panel no puede direccionar correctamente las filas extra → media pantalla muerta o duplicada.
 
-    RGB → GBR
+---
 
-Solución en software:
+# 8) Colores “entreverados” (RGB swap / orden real)
 
-``` cpp
-static inline uint16_t panel565(uint8_t r, uint8_t g, uint8_t b) {
-    return display->color565(g, b, r);
+Durante pruebas, los colores no coincidían con lo esperado.
+
+Observación típica en tu panel:
+
+| Color pedido | Color que ves |
+|---|---|
+| Rojo | Verde |
+| Verde | Azul |
+| Azul | Rojo |
+| Amarillo | Cyan (dependiendo mezcla) |
+| Cyan | Magenta (según mezcla) |
+
+Esto sugiere un orden real tipo:
+
+**RGB → GBR**
+
+## 8.1 Solución práctica (software)
+Crear un helper para mapear colores al orden real del panel:
+
+```cpp
+static inline uint16_t panel565(MatrixPanel_I2S_DMA* d, uint8_t r, uint8_t g, uint8_t b) {
+  // Panel en orden GBR:
+  return d->color565(g, b, r);
 }
 ```
 
-------------------------------------------------------------------------
+Y después usar `drawPixel(x,y, panel565(...))` o precalcular paleta con ese orden.
 
-# Display Artifacts
+---
 
-Durante las pruebas se observaron artefactos visuales:
+# 9) “Bandas diagonales / franjas” que solo salen en la foto
 
--   reflejos rojos
--   ghosting
--   píxeles fantasma cerca de sprites brillantes
+Esto es *clásico*:
+- PWM del panel + barrido (scan) + rolling shutter de cámara
+- Resultado: la cámara “ve” bandas que el ojo no ve.
 
-Esto ocurre principalmente cuando:
+Si el ojo no las ve y el panel se ve bien en vivo, no es un problema real del panel. Es tu cámara intentando entender la realidad.
 
--   el sprite está en ciertas posiciones del panel
--   se usan colores muy brillantes (blanco o amarillo)
+---
 
-Esto es típico en paneles HUB75 económicos.
+# 10) Ghosting / reflejos / deformaciones (especialmente abajo)
 
-------------------------------------------------------------------------
+Sí, eso puede ser **eléctrico**, **timing**, o **ambos**.
 
-# Power Stability
+Síntomas observados:
+- al bajar el sprite o al acercarse a la mitad inferior:
+  - “reflejo rojo” a un costado
+  - números/sprites “borrosos” o “deformados”
+  - destellos en otras partes al usar **blanco/amarillo** (colores con más LEDs encendidos simultáneamente)
 
-Los paneles HUB75 generan **picos de corriente muy rápidos**.
+Causas típicas en HUB75:
+- alimentación insuficiente (picos de corriente)
+- cables finos/largos → caída de tensión
+- brillo alto
+- refresh/timing borderline (clkphase / i2sspeed / latch timing)
+- ruido/masa floja
+- panel barato con drivers meh
 
-Incluso con una fuente:
+---
 
-    5V 8A
+# 11) Alimentación (esto NO es opcional)
 
-pueden aparecer:
+El panel 64×64 puede consumir bastante, sobre todo con blanco.
 
--   píxeles aleatorios
--   ghosting
--   glitches
+- Fuente usada: **5V 8A** (según foto)
+- Igual pueden aparecer glitches por picos.
 
-### Solución
+## 11.1 Capacitor “gordo”
+Recomendado:
+- **1000µF a 2200µF** (o más) electrolítico, cerca del panel
 
-Agregar capacitancia adicional.
+Ubicación:
+- lo más cerca posible entre **5V y GND** **en la entrada de alimentación del panel** (o en pads/borneras de power).
 
-    1000µF – 2200µF
+Esquema:
 
-Conexión:
+```
+5V ----+---- panel +
+       |
+     [ 2200µF ]
+       |
+GND ---+---- panel -
+```
 
-    5V ----+---- panel
-           |
-         [2200µF]
-           |
-    GND ---+---- panel
+Polaridad:
+- **+** al 5V
+- **-** al GND
 
-Esto reduce significativamente los artefactos.
+## 11.2 Cableado de power
+- cables gruesos
+- masa sólida
+- evitar que el ESP32 y el panel compartan retorno finito y ruidoso
 
-------------------------------------------------------------------------
+---
 
-# Internal Hardware Layout
+# 12) Mitigaciones por software (cuando la física te odia)
 
-Después de desmontar el dispositivo se observa:
+Lo que ayudó en tus pruebas:
 
-    +-------------------------------------+
-    |                                     |
-    |         RGB LED MATRIX              |
-    |                                     |
-    |   [driver IC] [driver IC]           |
-    |   [driver IC] [driver IC]           |
-    |                                     |
-    |        HUB75 DATA CONNECTOR         |
-    |                                     |
-    +-------------------------------------+
+- **Bajar brillo** (por ejemplo 60–120 sobre 255)
+- Activar **double buffering** y flip con timing razonable
+- Ajustar **clkphase** (en tu hardware: `true` te funcionó mejor)
+- Mantener FPS moderado (ej. 25 FPS)
 
-               |
-               | ribbon cable
-               |
+Ejemplo base de config “la que anda”:
 
-    +-----------------------------+
-    |         ESP32 BOARD         |
-    |                             |
-    |  WiFi MCU                   |
-    |                             |
-    |  USB Programming Interface  |
-    |                             |
-    +-----------------------------+
+```cpp
+HUB75_I2S_CFG mxconfig(64, 64, 1);
+mxconfig.gpio.e = 32;
+mxconfig.driver = HUB75_I2S_CFG::FM6126A;
+mxconfig.clkphase = true;
+mxconfig.double_buff = true;   // para flips limpios
+```
 
-------------------------------------------------------------------------
+---
 
-# Identified Components
+# 13) Problemas típicos de compilación (los que ya te pegaron)
 
-### ESP32
+## 13.1 `SCAN_16` / `SHIFT` “no existe”
+Causa: versión/fork incorrecto de la librería o bibliotecas duplicadas.
 
-Controlador principal.
+Solución:
+- dejar **una sola** librería (la correcta)
+- borrar carpetas duplicadas en `Documents/Arduino/libraries`
+- reiniciar Arduino IDE
 
-Responsable de:
+## 13.2 Errores I2S con ejemplos viejos
+Causa: ejemplos/librerías viejas incompatibles con core ESP32 moderno.
 
--   WiFi
--   sincronización de tiempo
--   control del panel HUB75
+Solución:
+- usar ejemplos de la librería actual
+- actualizar código viejo
 
-### LED Drivers
+## 13.3 `undefined reference to setup()/loop()`
+Causa: archivo incompleto o estructura `.ino` rota.
 
-El panel parece usar chips similares a:
+---
 
-    FM6126A
+# 14) Setup recomendado (Arduino IDE)
 
-Estos manejan:
+- Board: **ESP32 Dev Module** (o similar para WROOM-32)
+- Core ESP32: el que ya tenés funcionando (mencionaste 3.3.7)
+- Librería: **ESP32-HUB75-MatrixPanel-I2S-DMA**
 
--   PWM RGB
--   multiplexado
--   shift registers
+---
 
-------------------------------------------------------------------------
+# 15) Estado actual
 
-# Observed Hardware Quirks
-
-  Issue                         Description
-  ----------------------------- ---------------------------------------------
-  Pinout no estándar            GPIOs no coinciden con placas HUB75 típicas
-  RGB rotado                    Orden GBR
-  Ghosting                      Visible con alto brillo
-  Sensibilidad a alimentación   Mejorado con capacitor grande
-
-------------------------------------------------------------------------
-
-# Current Status
-
-✔ Panel funcionando\
-✔ Pinout identificado\
-✔ Soporte completo 64×64\
-✔ Animaciones y sprites funcionando
+✅ Pinout identificado  
+✅ 64×64 completo con **E**  
+✅ Driver: **FM6126A**  
+✅ Doble buffer funciona  
+✅ Animaciones/sprites andando
 
 Pendiente:
+- brillo automático con LDR
+- NTP en firmware custom
+- convertidor/editor de sprites
 
--   brillo automático con LDR
--   sincronización NTP
--   editor de sprites
+---
 
-------------------------------------------------------------------------
+# 16) Nota final
 
-# How to Repurpose This Device
-
-Una vez entendido el hardware, este dispositivo puede convertirse en:
-
--   reloj WiFi
--   display programable
--   panel de animaciones
--   tablero de sensores
--   mini display IoT
-
-Básicamente una **pantalla HUB75 totalmente programable basada en
-ESP32**.
-
-------------------------------------------------------------------------
-
-# Final Note
-
-Si llegaste aquí porque compraste uno de estos relojes y el firmware
-alternativo no funciona:
-
-no es tu culpa.
-
-El fabricante decidió cablear el panel de una forma bastante creativa.
-
+Si tu panel “solo prende media pantalla” con firmware alternativo:  
+no es tu culpa. El fabricante cableó esto con creatividad.
 
 
 

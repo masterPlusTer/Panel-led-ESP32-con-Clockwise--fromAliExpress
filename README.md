@@ -30,6 +30,8 @@ The unit contains:
 - 64×64 HUB75 RGB LED Matrix
 - FM6126A compatible panel
 - Custom PCB
+- BUZZER GPIO2 - (active-low)
+- LDR GPIO34
 
 Unlike many HUB75 panels sold individually, this one comes already assembled
 

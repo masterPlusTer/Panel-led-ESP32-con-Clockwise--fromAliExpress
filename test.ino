@@ -1,136 +1,311 @@
 #include <Arduino.h>
 #include <ESP32-HUB75-MatrixPanel-I2S-DMA.h>
 
-#define TARGET_FPS 25
+// =====================================================
+// CONFIGURACIÓN GENERAL
+// =====================================================
 
-// ====== PANEL CONFIG (TU MATRIZ) ======
-static const int PANEL_RES_X = 64;
-static const int PANEL_RES_Y = 64;
-static const int PANEL_CHAIN = 1;
-static const int PIN_E = 32;
+#define TARGET_FPS 15
 
-MatrixPanel_I2S_DMA *display = nullptr;
+static const int PANEL_WIDTH  = 64;
+static const int PANEL_HEIGHT = 64;
+static const int PANEL_CHAIN  = 1;
 
-// ====== SPRITE CONFIG ======
-static const int SPR_W = 16;
-static const int SPR_H = 16;
+// =====================================================
+// PINOUT DEL KIT CLOCKWISE / ESP32-WROOM-32
+// =====================================================
 
-// Paleta simple (índices 0..7). 0 = transparente
-uint16_t pal[8];
+#define PIN_R1   25
+#define PIN_G1   26
+#define PIN_B1   27
 
-// Sprite editable: 16x16
-uint8_t sprite[SPR_H][SPR_W] = {
-  {5,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
-  {0,0,0,0,0,2,2,2,2,2,2,0,0,0,0,0},
-  {0,0,0,0,2,2,2,2,2,2,2,2,0,0,0,0},
-  {0,0,0,2,2,2,2,2,2,2,2,2,2,0,0,0},
-  {0,0,2,2,2,2,2,2,2,2,2,2,2,2,0,0},
-  {0,0,2,2,2,0,0,2,2,0,0,2,2,2,0,0},
-  {0,3,2,2,2,0,0,2,2,0,0,2,2,2,3,0},
-  {0,3,2,2,2,2,2,2,2,2,2,2,2,2,3,0},
-  {0,3,2,2,2,2,2,2,2,2,2,2,2,2,3,0},
-  {0,3,2,2,2,0,2,2,2,2,0,2,2,2,3,0},
-  {0,0,2,2,2,2,0,0,0,0,2,2,2,2,0,0},
-  {0,0,0,2,2,2,2,2,2,2,2,2,2,0,0,0},
-  {0,0,0,0,2,2,2,2,2,2,2,2,0,0,0,0},
-  {0,0,0,0,0,2,2,2,2,2,2,0,0,0,0,0},
-  {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
-  {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0},
+#define PIN_R2   14
+#define PIN_G2   12
+#define PIN_B2   13
+
+#define PIN_A    23
+#define PIN_B    19
+#define PIN_C     5
+#define PIN_D    17
+#define PIN_E    32
+
+#define PIN_LAT   4
+#define PIN_OE   15
+#define PIN_CLK  16
+
+MatrixPanel_I2S_DMA* display = nullptr;
+
+// =====================================================
+// SPRITE
+// =====================================================
+//
+// 0 = transparente
+// 1 = amarillo
+// 2 = negro
+// 3 = rojo
+// 4 = verde
+// 5 = azul
+//
+
+static const int FACE_W = 16;
+static const int FACE_H = 16;
+
+const uint8_t face[FACE_H][FACE_W] = {
+  {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0},
+  {0,0,1,2,2,1,1,1,1,1,5,5,1,1,0,0},
+  {0,1,2,2,1,1,1,1,1,1,1,5,5,1,1,0},
+  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+
+  {1,1,1,2,2,1,1,1,1,1,2,2,1,1,1,1},
+  {1,1,1,2,2,1,1,1,1,1,2,2,1,1,1,1},
+
+  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+
+  {1,1,1,1,1,3,3,3,3,3,3,1,1,1,1,1},
+  {1,1,1,1,3,1,1,1,1,1,1,3,1,1,1,1},
+  {1,1,1,3,1,1,1,1,1,1,1,1,3,1,1,1},
+  {1,1,1,1,3,3,3,3,3,3,3,3,1,1,1,1},
+
+  {0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0},
+  {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+  {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0}
 };
 
-// ====== OBJETO QUE REBOTA ======
-struct SpriteObj {
-  float x, y;
-  float vx, vy;
-} obj;
+uint16_t palette[6];
 
-// --- Mapeo de color para TU panel ---
-// Tu panel está con canales rotados: RGB -> GBR (R->G, G->B, B->R)
-static inline uint16_t panel565(uint8_t r, uint8_t g, uint8_t b) {
+// =====================================================
+// OBJETO EN MOVIMIENTO
+// =====================================================
+
+struct MovingFace {
+  float x;
+  float y;
+  float vx;
+  float vy;
+};
+
+MovingFace obj;
+
+// =====================================================
+// COLOR CORRECTO PARA TU PANEL
+// =====================================================
+//
+// El orden correcto que confirmaste es GBR.
+//
+// Entrada lógica:
+//
+//   rojo, verde, azul
+//
+// Salida física:
+//
+//   verde, azul, rojo
+//
+
+static inline uint16_t panelColor(
+  uint8_t r,
+  uint8_t g,
+  uint8_t b
+) {
   return display->color565(g, b, r);
 }
 
-// Dibuja sprite con transparencia
-void drawSprite(int x0, int y0) {
-  for (int y = 0; y < SPR_H; y++) {
-    int yy = y0 + y;
-    if (yy < 0 || yy >= display->height()) continue;
+// =====================================================
+// CONSTRUIR PALETA
+// =====================================================
 
-    for (int x = 0; x < SPR_W; x++) {
-      int xx = x0 + x;
-      if (xx < 0 || xx >= display->width()) continue;
+void buildPalette() {
+  palette[0] = panelColor(0, 0, 0);         // transparente/fondo
+  palette[1] = panelColor(255, 220, 0);     // amarillo
+  palette[2] = panelColor(0, 0, 0);         // negro
+  palette[3] = panelColor(255, 0, 0);       // rojo
+  palette[4] = panelColor(0, 255, 0);       // verde
+  palette[5] = panelColor(0, 0, 255);       // azul
+}
 
-      uint8_t idx = sprite[y][x];
-      if (idx == 0) continue;
+// =====================================================
+// DIBUJAR CARITA
+// =====================================================
 
-      display->drawPixel(xx, yy, pal[idx]);
+void drawFace(int x0, int y0) {
+  for (int y = 0; y < FACE_H; y++) {
+    const int screenY = y0 + y;
+
+    if (screenY < 0 || screenY >= PANEL_HEIGHT) {
+      continue;
+    }
+
+    for (int x = 0; x < FACE_W; x++) {
+      const int screenX = x0 + x;
+
+      if (screenX < 0 || screenX >= PANEL_WIDTH) {
+        continue;
+      }
+
+      const uint8_t colorIndex = face[y][x];
+
+      if (colorIndex == 0) {
+        continue;
+      }
+
+      display->drawPixel(
+        screenX,
+        screenY,
+        palette[colorIndex]
+      );
     }
   }
 }
 
-void setup() {
-  delay(300);
-  Serial.begin(115200);
-  delay(200);
+// =====================================================
+// ACTUALIZAR MOVIMIENTO
+// =====================================================
 
-  HUB75_I2S_CFG mxconfig(PANEL_RES_X, PANEL_RES_Y, PANEL_CHAIN);
-  mxconfig.gpio.e = PIN_E;
-  mxconfig.driver = HUB75_I2S_CFG::FM6126A;
-  mxconfig.clkphase = true;
-
-  // doble buffer
-  mxconfig.double_buff = true;
-
-  display = new MatrixPanel_I2S_DMA(mxconfig);
-
-  if (!display->begin()) {
-    Serial.println("DMA begin() falló.");
-    while (true) delay(1000);
-  }
-
-  display->setBrightness8(90);
-  display->clearScreen();
-
-  // Paleta usando el mapeo corregido
-  pal[0] = panel565(0, 0, 0);
-  pal[1] = panel565(255, 255, 255); // blanco
-  pal[2] = panel565(255, 210, 0);   // amarillo
-  pal[3] = panel565(0, 255, 0);     // verde
-  pal[4] = panel565(0, 0, 255);     // azul
-  pal[5] = panel565(255, 0, 0);     // rojo
-  pal[6] = panel565(255, 0, 255);   // magenta
-  pal[7] = panel565(0, 255, 255);   // cyan
-
-  randomSeed(esp_random());
-
-  obj.x = random(0, display->width()  - SPR_W);
-  obj.y = random(0, display->height() - SPR_H);
-
-  obj.vx = (random(10, 50) / 20.0f) * (random(0, 2) ? 1 : -1);
-  obj.vy = (random(10, 50) / 20.0f) * (random(0, 2) ? 1 : -1);
-
-  Serial.printf("Refresh: %d Hz\n", display->calculated_refresh_rate);
-}
-
-void loop() {
-  display->clearScreen();
-  drawSprite((int)obj.x, (int)obj.y);
-  display->flipDMABuffer();
-
+void updateMovement() {
   obj.x += obj.vx;
   obj.y += obj.vy;
 
-  if (obj.x <= 0) { obj.x = 0; obj.vx = abs(obj.vx); }
-  if (obj.y <= 0) { obj.y = 0; obj.vy = abs(obj.vy); }
-
-  if (obj.x + SPR_W >= display->width()) {
-    obj.x = display->width() - SPR_W;
-    obj.vx = -abs(obj.vx);
-  }
-  if (obj.y + SPR_H >= display->height()) {
-    obj.y = display->height() - SPR_H;
-    obj.vy = -abs(obj.vy);
+  if (obj.x <= 0.0f) {
+    obj.x = 0.0f;
+    obj.vx = fabsf(obj.vx);
   }
 
-  delay(1000 / TARGET_FPS);
+  if (obj.y <= 0.0f) {
+    obj.y = 0.0f;
+    obj.vy = fabsf(obj.vy);
+  }
+
+  const float maxX = PANEL_WIDTH - FACE_W;
+  const float maxY = PANEL_HEIGHT - FACE_H;
+
+  if (obj.x >= maxX) {
+    obj.x = maxX;
+    obj.vx = -fabsf(obj.vx);
+  }
+
+  if (obj.y >= maxY) {
+    obj.y = maxY;
+    obj.vy = -fabsf(obj.vy);
+  }
+}
+
+// =====================================================
+// CONFIGURAR MATRIZ
+// =====================================================
+
+void setupDisplay() {
+  HUB75_I2S_CFG::i2s_pins pins = {
+    PIN_R1,
+    PIN_G1,
+    PIN_B1,
+
+    PIN_R2,
+    PIN_G2,
+    PIN_B2,
+
+    PIN_A,
+    PIN_B,
+    PIN_C,
+    PIN_D,
+    PIN_E,
+
+    PIN_LAT,
+    PIN_OE,
+    PIN_CLK
+  };
+
+  HUB75_I2S_CFG config(
+    PANEL_WIDTH,
+    PANEL_HEIGHT,
+    PANEL_CHAIN,
+    pins
+  );
+
+  /*
+   * Configuración estable confirmada:
+   *
+   * - ESP32 Core 2.0.17
+   * - versión antigua de la librería HUB75
+   * - FM6126A
+   * - clkphase true
+   * - sin doble buffer
+   */
+
+  config.driver = HUB75_I2S_CFG::FM6126A;
+  config.clkphase = true;
+  config.double_buff = false;
+
+  display = new MatrixPanel_I2S_DMA(config);
+
+  if (!display->begin()) {
+    Serial.println("ERROR: no se pudo iniciar la matriz.");
+
+    while (true) {
+      delay(1000);
+    }
+  }
+
+  display->setBrightness8(40);
+  display->clearScreen();
+
+  Serial.printf(
+    "Refresh calculado: %d Hz\n",
+    display->calculated_refresh_rate
+  );
+}
+
+// =====================================================
+// SETUP
+// =====================================================
+
+void setup() {
+  Serial.begin(115200);
+  delay(500);
+
+  setupDisplay();
+  buildPalette();
+
+  // Posición inicial.
+  obj.x = 5.0f;
+  obj.y = 5.0f;
+
+  // Velocidad.
+  obj.vx = 0.65f;
+  obj.vy = 0.48f;
+
+  Serial.println();
+  Serial.println("Carita movil iniciada.");
+  Serial.println("Orden de color fijo: GBR.");
+}
+
+// =====================================================
+// LOOP
+// =====================================================
+
+void loop() {
+  const unsigned long frameStart = millis();
+
+  // Limpiar pantalla.
+  display->fillScreen(palette[0]);
+
+  // Dibujar sprite.
+  drawFace(
+    static_cast<int>(obj.x),
+    static_cast<int>(obj.y)
+  );
+
+  // Mover para el próximo cuadro.
+  updateMovement();
+
+  // Control de velocidad.
+  const unsigned long targetFrameTime =
+    1000UL / TARGET_FPS;
+
+  const unsigned long elapsed =
+    millis() - frameStart;
+
+  if (elapsed < targetFrameTime) {
+    delay(targetFrameTime - elapsed);
+  }
 }

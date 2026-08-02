@@ -203,7 +203,7 @@ This repository currently uses:
 | Component | Version |
 |-----------|----------|
 | ESP32 Arduino Core | 2.0.17 |
-| HUB75 DMA Library | Version included in this repository |
+| HUB75 DMA Library | Version included in this repository (do not try the examples includen in the library, wont work...) |
 | Driver | FM6126A |
 | Panel | 64×64 HUB75 |
 | MCU | ESP32-WROOM-32 |

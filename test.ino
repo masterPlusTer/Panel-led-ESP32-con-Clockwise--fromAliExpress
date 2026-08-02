@@ -45,6 +45,16 @@ MatrixPanel_I2S_DMA* display = nullptr;
 // 3 = rojo
 // 4 = verde
 // 5 = azul
+// 6 = blanco
+// 7 = magenta
+// 8 = cian
+// 9 = naranja
+//
+// Transparente significa:
+// "no dibujar nada en ese píxel".
+//
+// Negro significa:
+// "dibujar un píxel negro explícitamente".
 //
 
 static const int FACE_W = 16;
@@ -52,28 +62,34 @@ static const int FACE_H = 16;
 
 const uint8_t face[FACE_H][FACE_W] = {
   {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0},
-  {0,0,1,2,2,1,1,1,1,1,5,5,1,1,0,0},
-  {0,1,2,2,1,1,1,1,1,1,1,5,5,1,1,0},
+  {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
+  {0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0},
   {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
 
-  {1,1,1,2,2,1,1,1,1,1,2,2,1,1,1,1},
-  {1,1,1,2,2,1,1,1,1,1,2,2,1,1,1,1},
+  // Ojos con borde negro y brillo blanco
+  {1,1,2,2,2,1,1,1,1,1,2,2,2,1,1,1},
+  {1,1,2,6,2,1,1,1,1,1,2,6,2,1,1,1},
+  {1,1,2,2,2,1,1,1,1,1,2,2,2,1,1,1},
 
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
-  {1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1},
+  // Mejillas
+  {1,7,7,1,1,1,1,1,1,1,1,1,1,7,7,1},
 
-  {1,1,1,1,1,3,3,3,3,3,3,1,1,1,1,1},
-  {1,1,1,1,3,1,1,1,1,1,1,3,1,1,1,1},
-  {1,1,1,3,1,1,1,1,1,1,1,1,3,1,1,1},
-  {1,1,1,1,3,3,3,3,3,3,3,3,1,1,1,1},
+  // Nariz pequeña
+  {1,1,1,1,1,1,9,9,9,1,1,1,1,1,1,1},
+
+  // Sonrisa
+  {1,1,1,1,2,1,1,1,1,1,1,2,1,1,1,1},
+  {1,1,1,2,1,3,3,3,3,3,3,1,2,1,1,1},
+  {1,1,2,1,1,3,6,6,6,6,3,1,1,2,1,1},
+  {1,1,1,2,1,1,3,3,3,3,1,1,2,1,1,1},
 
   {0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0},
   {0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0},
   {0,0,0,1,1,1,1,1,1,1,1,1,1,0,0,0}
 };
 
-uint16_t palette[6];
+// Ahora hay 10 entradas: índices 0 a 9.
+uint16_t palette[10];
 
 // =====================================================
 // OBJETO EN MOVIMIENTO
@@ -92,14 +108,12 @@ MovingFace obj;
 // COLOR CORRECTO PARA TU PANEL
 // =====================================================
 //
-// El orden correcto que confirmaste es GBR.
+// El orden correcto confirmado es GBR.
 //
 // Entrada lógica:
-//
 //   rojo, verde, azul
 //
 // Salida física:
-//
 //   verde, azul, rojo
 //
 
@@ -116,12 +130,16 @@ static inline uint16_t panelColor(
 // =====================================================
 
 void buildPalette() {
-  palette[0] = panelColor(0, 0, 0);         // transparente/fondo
+  palette[0] = panelColor(0, 0, 0);         // transparente
   palette[1] = panelColor(255, 220, 0);     // amarillo
   palette[2] = panelColor(0, 0, 0);         // negro
   palette[3] = panelColor(255, 0, 0);       // rojo
   palette[4] = panelColor(0, 255, 0);       // verde
   palette[5] = panelColor(0, 0, 255);       // azul
+  palette[6] = panelColor(255, 255, 255);   // blanco
+  palette[7] = panelColor(255, 0, 255);     // magenta
+  palette[8] = panelColor(0, 255, 255);     // cian
+  palette[9] = panelColor(255, 120, 0);     // naranja
 }
 
 // =====================================================
@@ -145,6 +163,7 @@ void drawFace(int x0, int y0) {
 
       const uint8_t colorIndex = face[y][x];
 
+      // 0 es transparente: no se dibuja.
       if (colorIndex == 0) {
         continue;
       }
@@ -225,10 +244,10 @@ void setupDisplay() {
   /*
    * Configuración estable confirmada:
    *
-   * - ESP32 Core 2.0.17
-   * - versión antigua de la librería HUB75
-   * - FM6126A
-   * - clkphase true
+   * - ESP32 Arduino Core 2.0.17
+   * - versión antigua compatible de la librería HUB75
+   * - driver FM6126A
+   * - clkphase = true
    * - sin doble buffer
    */
 
@@ -266,11 +285,9 @@ void setup() {
   setupDisplay();
   buildPalette();
 
-  // Posición inicial.
   obj.x = 5.0f;
   obj.y = 5.0f;
 
-  // Velocidad.
   obj.vx = 0.65f;
   obj.vy = 0.48f;
 
@@ -286,19 +303,16 @@ void setup() {
 void loop() {
   const unsigned long frameStart = millis();
 
-  // Limpiar pantalla.
-  display->fillScreen(palette[0]);
+  // Borra todo el cuadro anterior con negro.
+  display->fillScreen(palette[2]);
 
-  // Dibujar sprite.
   drawFace(
     static_cast<int>(obj.x),
     static_cast<int>(obj.y)
   );
 
-  // Mover para el próximo cuadro.
   updateMovement();
 
-  // Control de velocidad.
   const unsigned long targetFrameTime =
     1000UL / TARGET_FPS;
 

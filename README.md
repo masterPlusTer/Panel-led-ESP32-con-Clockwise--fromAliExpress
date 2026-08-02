@@ -57,6 +57,9 @@ E   = GPIO 32
 LAT = GPIO 4
 OE  = GPIO 15
 CLK = GPIO 16
+
+- BUZZER GPIO2 - (active-low)
+- LDR GPIO34
 ```
 
 ---

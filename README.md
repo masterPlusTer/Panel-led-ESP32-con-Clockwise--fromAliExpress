@@ -29,12 +29,9 @@ The unit contains:
 - ESP32-WROOM-32
 - 64×64 HUB75 RGB LED Matrix
 - FM6126A compatible panel
-- Built-in switching power supply
-- RTC battery
-- Large electrolytic capacitor
 - Custom PCB
 
-Unlike many HUB75 panels sold individually, this one comes already assembled inside a finished enclosure.
+Unlike many HUB75 panels sold individually, this one comes already assembled
 
 ---
 

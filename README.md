@@ -1,331 +1,287 @@
-# ESP32 64×64 RGB Matrix Clock (AliExpress Reverse Engineering)
 
-Este repo existe porque (como es tradición) un vendedor de AliExpress vendió un producto “compatible” y después desapareció del mapa con toda la documentación.  
-Resultado: **ingeniería inversa** a la vieja usanza.
 
-## TL;DR
 
-- Dispositivo: **ESP32‑WROOM‑32 + panel HUB75 RGB 64×64 + buzzer + LDR**
-- El firmware original funciona (reloj “Super Mario”).
-- “Clockwise” y otros firmwares genéricos **no** funcionan bien porque el fabricante usó un **pinout no estándar**, especialmente **PIN E**.
-- Además, el panel/driver parece venir con **orden de color distinto (RGB → GBR)**.
-- Hay **ghosting / reflejos** (especialmente abajo) que mejoran con **alimentación decente + capacitor grande + brillo moderado + timing correcto**.
-- Algunas “bandas diagonales” o “franjas” **solo aparecen en fotos** (rolling shutter de la cámara + PWM del panel).
+# ESP32 HUB75 LED Panel from AliExpress (Clockwise Clone)
+
+> Reverse engineering an undocumented ESP32 + HUB75 LED clock purchased from AliExpress.
 
 ---
-
-# 1) El bicho
-
-Fotos del dispositivo:
-
 ![esp32matrix1](https://github.com/user-attachments/assets/9122d3a7-0c69-4042-b326-7ec08ad73e53)  
 ![esp32matrix2](https://github.com/user-attachments/assets/a6f5e992-4ea1-4b2f-8697-119879209f23)
+## About
 
-Lo que era (promesa de marketing):
-- Reloj preinstalado “Mario”
-- “Se le pueden instalar más relojes desde Clockwise”
+This repository documents the reverse engineering process of a cheap 64×64 HUB75 RGB LED panel sold on AliExpress as a fully assembled digital clock inspired by the **Clockwise** project.
 
-Lo que es (realidad):
-- **Funciona bien solo con el firmware que trae**
-- Si cargás firmware genérico sin configurar el panel, **funciona media pantalla / filas raras / colores cruzados**
+Unfortunately, the original AliExpress listing no longer exists, and the manufacturer never released any documentation, schematics, source code, or firmware.
 
----
+After flashing custom firmware, the original factory firmware was lost forever because no backup had been made.
 
-# 2) Hardware Architecture
+Rather than giving up, this repository became an attempt to understand the hardware and make it usable again.
 
-Componentes identificados:
-
-- **ESP32‑WROOM‑32**
-- **Panel RGB HUB75 64×64** (multiplexado 1/32)
-- **Buzzer**
-- **LDR** (sensor de luz)
-- Entrada **5V** (USB/step-down según versión del dispositivo)
-
-Diagrama simplificado:
-
-```
-           +------------------+
-           |      ESP32       |
-           |                  |
-           | GPIO2  -> Buzzer |
-           | GPIO34 -> LDR    |
-           |                  |
-           | HUB75 Signals    |
-           +--------+---------+
-                    |
-                    | ribbon cable
-                    v
-             +--------------+
-             | 64×64 HUB75  |
-             | RGB Matrix   |
-             +--------------+
-```
+Hopefully it will save someone else many hours of frustration.
 
 ---
 
-# 3) El problema principal: pinout “creativo” (y el PIN E)
+# Hardware
 
-El panel es **64×64**, así que normalmente es **1/32 scan** y necesita la línea **E** para direccionar todas las filas.
+The unit contains:
 
-Cuando cargábamos firmware alternativo sin E:
-- solo se actualizaban partes del panel (por ejemplo “primera tanda de 16 filas” y otra “tanda”)
-- el resto quedaba apagado o con artefactos
+- ESP32-WROOM-32
+- 64×64 HUB75 RGB LED Matrix
+- FM6126A compatible panel
+- Built-in switching power supply
+- RTC battery
+- Large electrolytic capacitor
+- Custom PCB
 
-**Solución clave:** configurar **PIN E** en el ESP32.
+Unlike many HUB75 panels sold individually, this one comes already assembled inside a finished enclosure.
 
-Ejemplo (Arduino + ESP32-HUB75-MatrixPanel-I2S-DMA):
+---
 
-```cpp
-HUB75_I2S_CFG mxconfig(64, 64, 1);
-mxconfig.gpio.e = 32;           // <<<<<< PIN E (CLAVE EN ESTE HARDWARE)
+# GPIO Mapping
+
+```text
+R1  = GPIO 25
+G1  = GPIO 26
+B1  = GPIO 27
+
+R2  = GPIO 14
+G2  = GPIO 12
+B2  = GPIO 13
+
+A   = GPIO 23
+B   = GPIO 19
+C   = GPIO 5
+D   = GPIO 17
+E   = GPIO 32
+
+LAT = GPIO 4
+OE  = GPIO 15
+CLK = GPIO 16
 ```
 
 ---
 
-# 4) Pin mapping real (HUB75 → ESP32)
+# The Problem
 
-Cableado real entre el ESP32 y el conector HUB75 del panel (como viene en este dispositivo):
+Initially everything appeared to be working.
 
-| Pin HUB75 | Señal (según panel) | GPIO ESP32 |
-|---:|---|---|
-| 1  | (R1 típico) | GPIO25 |
-| 2  | (G1 típico) | GPIO27 |
-| 3  | (B1 típico) | GPIO14 |
-| 4  | (R2 típico) | GPIO09 |
-| 5  | (G2 típico) | GPIO23 |
-| 6  | (B2 típico) | GPIO05 |
-| 7  | A | GPIO16 |
-| 8  | B | GPIO15 |
-| 9  | GND | GND |
-| 10 | LAT / STB (según placa) | GPIO04 |
-| 11 | D | GPIO17 |
-| 12 | C | GPIO19 |
-| 13 | **E** | **GPIO32** ✅ (MUY IMPORTANTE) |
-| 14 | OE | GPIO12 |
-| 15 | GND | GND |
-| 16 | CLK | GPIO26 |
+Simple tests looked perfect:
 
-⚠ Nota: algunos nombres “típicos” (R1/G1/B1, LAT, OE, CLK) pueden variar en serigrafía.  
-Acá lo importante es el **mapeo real a GPIO**, no la etiqueta bonita.
+- solid colors
+- refresh
+- brightness
+- addressing
 
----
+However, as soon as real graphics were drawn, everything fell apart.
 
-# 5) Periféricos
+Typical symptoms included:
 
-## 5.1 Buzzer
-- **GPIO2**
-- **Activo-bajo**
-  - GPIO2 = 0 → suena
-  - GPIO2 = 1 → silencio
+- sprites becoming distorted
+- graphics breaking when crossing the middle of the screen
+- random colored rectangles
+- corrupted lower half
+- incorrect colors
+- strange artifacts while objects moved
 
-## 5.2 LDR (sensor de luz)
-- **GPIO34 (ADC1)**
-- Útil para brillo automático (pendiente/por implementar).
+Curiously, filling the entire display with a single color worked perfectly.
+
+This suggested that the hardware itself was probably not damaged.
 
 ---
 
-# 6) Driver IC (panel)
+# Investigation
 
-En fotos del reverso aparece el IC de driver. Por comportamiento y pruebas:
-- funcionan configuraciones tipo **FM6126A** / **FM6124** (depende del panel real)
-- En tu caso, **FM6126A** fue el que “simplemente anduvo”.
+During the debugging process, many different possibilities were tested.
 
-Ejemplo:
+## Hardware
 
-```cpp
-mxconfig.driver = HUB75_I2S_CFG::FM6126A;
-// mxconfig.driver = HUB75_I2S_CFG::FM6124;
-```
-
----
-
-# 7) Multiplexado / Scan (por qué esto es sensible)
-
-Panel 64×64 típico:
-- **1/32 scan**
-- Selección de filas con: **A, B, C, D, E**
-- Se actualizan filas por “barrido” a alta velocidad.
-
-Simplificado:
-
-```
-Step 1  : Row 0  + Row 32
-Step 2  : Row 1  + Row 33
-...
-Step 32 : Row 31 + Row 63
-```
-
-Si **E no está cableado/configurado**, el panel no puede direccionar correctamente las filas extra → media pantalla muerta o duplicada.
+- damaged HUB75 panel
+- broken LEDs
+- power supply
+- loose connections
+- PCB damage
 
 ---
 
-# 8) Colores “entreverados” (RGB swap / orden real)
+## Software
 
-Durante pruebas, los colores no coincidían con lo esperado.
+Several driver configurations were tested.
 
-Observación típica en tu panel:
+Including:
 
-| Color pedido | Color que ves |
-|---|---|
-| Rojo | Verde |
-| Verde | Azul |
-| Azul | Rojo |
-| Amarillo | Cyan (dependiendo mezcla) |
-| Cyan | Magenta (según mezcla) |
-
-Esto sugiere un orden real tipo:
-
-**RGB → GBR**
-
-## 8.1 Solución práctica (software)
-Crear un helper para mapear colores al orden real del panel:
-
-```cpp
-static inline uint16_t panel565(MatrixPanel_I2S_DMA* d, uint8_t r, uint8_t g, uint8_t b) {
-  // Panel en orden GBR:
-  return d->color565(g, b, r);
-}
-```
-
-Y después usar `drawPixel(x,y, panel565(...))` o precalcular paleta con ese orden.
+- FM6126A
+- SHIFTREG
+- SM5266P
+- multiple CLKPHASE values
+- latch blanking values
+- DMA double buffer on/off
+- brightness
+- refresh timing
+- scan timing
 
 ---
 
-# 9) “Bandas diagonales / franjas” que solo salen en la foto
+## RGB permutations
 
-Esto es *clásico*:
-- PWM del panel + barrido (scan) + rolling shutter de cámara
-- Resultado: la cámara “ve” bandas que el ojo no ve.
+Different channel mappings were tested:
 
-Si el ojo no las ve y el panel se ve bien en vivo, no es un problema real del panel. Es tu cámara intentando entender la realidad.
+- RGB
+- RBG
+- GRB
+- GBR
+- BRG
+- BGR
 
----
-
-# 10) Ghosting / reflejos / deformaciones (especialmente abajo)
-
-Sí, eso puede ser **eléctrico**, **timing**, o **ambos**.
-
-Síntomas observados:
-- al bajar el sprite o al acercarse a la mitad inferior:
-  - “reflejo rojo” a un costado
-  - números/sprites “borrosos” o “deformados”
-  - destellos en otras partes al usar **blanco/amarillo** (colores con más LEDs encendidos simultáneamente)
-
-Causas típicas en HUB75:
-- alimentación insuficiente (picos de corriente)
-- cables finos/largos → caída de tensión
-- brillo alto
-- refresh/timing borderline (clkphase / i2sspeed / latch timing)
-- ruido/masa floja
-- panel barato con drivers meh
+Some combinations produced better colors than others but none solved the corruption problem.
 
 ---
 
-# 11) Alimentación (esto NO es opcional)
+## Library versions
 
-El panel 64×64 puede consumir bastante, sobre todo con blanco.
+This turned out to be the most important discovery.
 
-- Fuente usada: **5V 8A** (según foto)
-- Igual pueden aparecer glitches por picos.
+Different versions of:
 
-## 11.1 Capacitor “gordo”
-Recomendado:
-- **1000µF a 2200µF** (o más) electrolítico, cerca del panel
+- ESP32 Arduino Core
+- ESP32 HUB75 DMA library
 
-Ubicación:
-- lo más cerca posible entre **5V y GND** **en la entrada de alimentación del panel** (o en pads/borneras de power).
+produce completely different results on this particular hardware.
 
-Esquema:
+Some versions compile correctly but display corrupted graphics.
 
-```
-5V ----+---- panel +
-       |
-     [ 2200µF ]
-       |
-GND ---+---- panel -
-```
+Others produce stable output.
 
-Polaridad:
-- **+** al 5V
-- **-** al GND
-
-## 11.2 Cableado de power
-- cables gruesos
-- masa sólida
-- evitar que el ESP32 y el panel compartan retorno finito y ruidoso
+The panel is much more sensitive to software versions than expected.
 
 ---
 
-# 12) Mitigaciones por software (cuando la física te odia)
+# Current Status
 
-Lo que ayudó en tus pruebas:
+The display is now stable.
 
-- **Bajar brillo** (por ejemplo 60–120 sobre 255)
-- Activar **double buffering** y flip con timing razonable
-- Ajustar **clkphase** (en tu hardware: `true` te funcionó mejor)
-- Mantener FPS moderado (ej. 25 FPS)
+Current achievements:
 
-Ejemplo base de config “la que anda”:
+- Stable image
+- No random rectangles
+- No half-screen corruption
+- Stable refresh
+- Correct sprite rendering
+- Correct addressing
+- Smooth animation
 
-```cpp
-HUB75_I2S_CFG mxconfig(64, 64, 1);
-mxconfig.gpio.e = 32;
-mxconfig.driver = HUB75_I2S_CFG::FM6126A;
-mxconfig.clkphase = true;
-mxconfig.double_buff = true;   // para flips limpios
-```
+Remaining work:
 
----
-
-# 13) Problemas típicos de compilación (los que ya te pegaron)
-
-## 13.1 `SCAN_16` / `SHIFT` “no existe”
-Causa: versión/fork incorrecto de la librería o bibliotecas duplicadas.
-
-Solución:
-- dejar **una sola** librería (la correcta)
-- borrar carpetas duplicadas en `Documents/Arduino/libraries`
-- reiniciar Arduino IDE
-
-## 13.2 Errores I2S con ejemplos viejos
-Causa: ejemplos/librerías viejas incompatibles con core ESP32 moderno.
-
-Solución:
-- usar ejemplos de la librería actual
-- actualizar código viejo
-
-## 13.3 `undefined reference to setup()/loop()`
-Causa: archivo incompleto o estructura `.ino` rota.
+- Finish documenting the hardware
+- Verify exact RGB channel mapping
+- Compare behavior with the original Clockwise firmware
+- Improve examples
 
 ---
 
-# 14) Setup recomendado (Arduino IDE)
+# Lessons Learned
 
-- Board: **ESP32 Dev Module** (o similar para WROOM-32)
-- Core ESP32: el que ya tenés funcionando (mencionaste 3.3.7)
-- Librería: **ESP32-HUB75-MatrixPanel-I2S-DMA**
+If you own one of these clocks:
 
----
+## BACK UP THE ORIGINAL FIRMWARE FIRST.
 
-# 15) Estado actual
+Seriously.
 
-✅ Pinout identificado  
-✅ 64×64 completo con **E**  
-✅ Driver: **FM6126A**  
-✅ Doble buffer funciona  
-✅ Animaciones/sprites andando
+Do it before changing anything.
 
-Pendiente:
-- brillo automático con LDR
-- NTP en firmware custom
-- convertidor/editor de sprites
+Once erased, there is currently no public copy of the factory firmware.
+
+Many inexpensive Chinese products are shipped with multiple undocumented hardware revisions under exactly the same product listing.
+
+Two visually identical clocks may require different drivers or timing parameters.
+
+Never assume that someone else's configuration will work on your unit.
 
 ---
 
-# 16) Nota final
+# Known Working Environment
 
-Si tu panel “solo prende media pantalla” con firmware alternativo:  
-no es tu culpa. El fabricante cableó esto con creatividad.
+This repository currently uses:
+
+| Component | Version |
+|-----------|----------|
+| ESP32 Arduino Core | 2.0.17 |
+| HUB75 DMA Library | Version included in this repository |
+| Driver | FM6126A |
+| Panel | 64×64 HUB75 |
+| MCU | ESP32-WROOM-32 |
+
+Using newer versions may require additional changes.
+
+---
+
+# Why this repository exists
+
+The goal is not simply to display graphics.
+
+The goal is to document the entire reverse engineering process so anyone who buys one of these mysterious AliExpress clocks has a starting point instead of beginning from zero.
+
+If this repository saves someone an entire weekend of trial and error, then it has already accomplished its purpose.
+
+---
+
+# Repository Goals
+
+- Document the hardware
+- Document the PCB
+- Document the GPIO mapping
+- Create working examples
+- Understand the HUB75 timing
+- Restore as much original functionality as possible
+- Make the hardware useful again
+
+---
+
+# Contributing
+
+If you own the same hardware, contributions are welcome.
+
+Useful information includes:
+
+- original firmware backups
+- PCB photos
+- hardware revisions
+- panel driver identification
+- oscilloscope captures
+- timing measurements
+- successful configurations
+
+Every new piece of information helps build a better understanding of this undocumented hardware.
+
+---
+
+# A Final Warning
+
+If you found this repository **before** flashing your clock...
+
+**Stop.**
+
+Make a complete backup of the ESP32 flash first.
+
+Future-you will be extremely grateful.
+
+---
+
+# License
+
+MIT License
+
+---
+
+# Acknowledgements
+
+Thanks to:
+
+- The Clockwise project for inspiring these devices.
+- The ESP32 community.
+- Everyone sharing information about undocumented HUB75 panels.
+
+This repository focuses specifically on the reverse engineering of the undocumented AliExpress clone hardware, which differs from the official Clockwise project in several important ways.
 
 
 
